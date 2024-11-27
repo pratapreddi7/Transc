@@ -1,0 +1,127 @@
+#MASTER CSV file to .txt file 
+
+
+import re
+import os
+import csv
+import langid
+from urllib.parse import urlparse, parse_qs
+import pandas as pd
+
+# Language mapping (for easier identification)
+language_map = {
+    "en": "English", "bn": "Bengali", "es": "Spanish", "de": "German",
+    "pt": "Portuguese", "zh": "Chinese", "ja": "Japanese", "ko": "Korean",
+    "ar": "Arabic", "hi": "Hindi", "ta": "Tamil", "te": "Telugu", "ml": "Malayalam",
+}
+
+# Function to preprocess the text (for language detection)
+def preprocess_text(text):
+    clean_text = re.sub(r'[^0-9a-zA-Z\u0900-\u097F\u0980-\u09FF\s]', ' ', text)
+    clean_text = re.sub(r'\s+', ' ', clean_text)
+    return clean_text.strip()
+
+# Function to parse duration into minutes
+def parse_duration_to_minutes(duration_str):
+    hours = minutes = seconds = 0
+    if "hours" in duration_str:
+        hours = int(re.search(r"(\d+)\s*hours", duration_str).group(1))
+    if "mins" in duration_str:
+        minutes = int(re.search(r"(\d+)\s*mins", duration_str).group(1))
+    if "secs" in duration_str:
+        seconds = int(re.search(r"(\d+)\s*secs", duration_str).group(1))
+    return hours * 60 + minutes + seconds / 60
+
+# Function to normalize YouTube URLs to extract the video ID
+def normalize_video_url(url):
+    parsed_url = urlparse(url)
+    if 'youtube.com' in parsed_url.netloc or 'youtu.be' in parsed_url.netloc:
+        query_params = parse_qs(parsed_url.query)
+        if 'v' in query_params:
+            return query_params['v'][0]
+        elif parsed_url.path.startswith("/"):
+            return parsed_url.path.split("/")[-1]
+    return url
+
+# Function to create a master CSV file with video details
+def create_master_csv(main_folder, video_details):
+    master_csv_path = os.path.join(main_folder, "Master_Details.csv")
+
+    with open(master_csv_path, "w", newline='', encoding="utf-8") as csvfile:
+        fieldnames = [
+            "Video URL", "Video Title", "Channel Name", "Duration", "Duration (minutes)",
+            "Word Count", "Character Count", "Para Count", "Language"
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for detail in video_details:
+            url, title, channel, duration, transcript = detail
+            duration_minutes = parse_duration_to_minutes(duration)
+            word_count = len(transcript.split())
+            char_count = len(transcript)
+            para_count = transcript.count('\n') + 1
+            language = language_map.get(langid.classify(preprocess_text(transcript[:1000]))[0], "Unknown")
+
+            writer.writerow({
+                "Video URL": url,
+                "Video Title": title,
+                "Channel Name": channel,
+                "Duration": duration,
+                "Duration (minutes)": round(duration_minutes, 2),
+                "Word Count": word_count,
+                "Character Count": char_count,
+                "Para Count": para_count,
+                "Language": language
+            })
+
+    print(f"Master CSV created at: {master_csv_path}")
+
+# Function to parse the transcript file based on the given structure
+def parse_transcripts(input_path):
+    main_folder = os.path.join(os.path.dirname(input_path), os.path.splitext(os.path.basename(input_path))[0])
+    os.makedirs(main_folder, exist_ok=True)
+    video_details = []
+    unique_urls = set()  # To track unique video IDs
+
+    with open(input_path, "r", encoding="utf-8", errors="ignore") as file:
+        data = file.read()
+
+    # Define patterns for extracting relevant fields in the file
+    video_pattern = re.compile(r"Video url: ?(https?://[^\s]+)")
+    name_pattern = re.compile(r"video Name: ?(.+)")
+    channel_pattern = re.compile(r"Channel Name: ?(.+)")
+    duration_pattern = re.compile(r"video Duration: ?(.+)")
+    transcript_pattern = re.compile(r"Video Transcript:\n([\s\S]*?)(?=\nVideo url:|\Z)")
+
+    # Process each video entry
+    for video_match in video_pattern.finditer(data):
+        start_idx = video_match.start()
+        video_url = video_match.group(1)
+
+        # Normalize the video URL to extract the unique ID and check for duplicates
+        video_id = normalize_video_url(video_url)
+        if video_id in unique_urls:
+            print(f"Duplicate URL skipped: {video_url}")
+            continue
+        unique_urls.add(video_id)
+
+        video_name = name_pattern.search(data, start_idx).group(1) if name_pattern.search(data, start_idx) else "Unknown"
+        channel_name = channel_pattern.search(data, start_idx).group(1).strip() if channel_pattern.search(data, start_idx) else "Unknown"
+        duration = duration_pattern.search(data, start_idx).group(1) if duration_pattern.search(data, start_idx) else "Unknown"
+        transcript = transcript_pattern.search(data, start_idx).group(1) if transcript_pattern.search(data, start_idx) else ""
+
+        video_details.append((video_url, video_name.strip(), channel_name, duration, transcript))
+
+    create_master_csv(main_folder, video_details)
+
+# Main function to run the code
+def main(input_file_path):
+    parse_transcripts(input_file_path)
+
+if __name__ == "__main__":
+    input_file_path = r"D:\Downloads\1transcripts\final output\Bulktranscript_All\AllTanscripts_Final.txt"  # Path to your input file
+    main(input_file_path)
+====================================================================================
+
+#
